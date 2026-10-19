@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Attendance Calculator</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+body{background:#000;color:#fff;font-family:Arial,Helvetica,sans-serif;min-height:100vh;padding:16px 16px 90px}
+h1{font-size:22px;margin-bottom:4px}
+.sub{color:#8a8a8a;font-size:13px;margin-bottom:18px}
+.top{display:flex;align-items:center;gap:10px;margin-bottom:16px;flex-wrap:wrap}
+.top h2{font-size:20px;flex:1}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px}
+.box{background:#1e6fff;color:#fff;border:none;border-radius:14px;padding:26px 12px;font-size:22px;font-weight:700;cursor:pointer;text-align:center}
+.box small{display:block;font-size:12px;font-weight:400;opacity:.85;margin-top:6px}
+.box:active{transform:scale(.97)}
+.btn{background:#111;color:#fff;border:1px solid #1e6fff;border-radius:10px;padding:10px 16px;font-size:14px;cursor:pointer}
+.btn.fill{background:#1e6fff}
+select,input.f{background:#111;color:#fff;border:1px solid #333;border-radius:8px;padding:10px;font-size:15px;width:100%}
+.row{display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid #1a1a1a}
+.rn{width:34px;color:#8a8a8a;font-size:13px;text-align:right}
+.nm{flex:1;min-width:0;background:transparent;border:none;color:#fff;font-size:15px;padding:6px 2px}
+.nm:focus{outline:1px solid #1e6fff;border-radius:4px}
+.days{display:flex;gap:5px}
+.d{width:34px;height:34px;border-radius:8px;border:1px solid #444;background:#222;color:#888;font-size:12px;font-weight:700;cursor:pointer}
+.d.on{background:#1e6fff;border-color:#1e6fff;color:#fff}
+.hdr{position:sticky;top:0;background:#000;z-index:5;padding:6px 0;border-bottom:1px solid #333}
+.sbar{position:fixed;left:0;right:0;bottom:0;background:#000;border-top:1px solid #222;padding:12px 16px}
+.sbar .btn{width:100%;padding:14px;font-size:16px}
+table{width:100%;border-collapse:collapse;font-size:14px}
+th,td{padding:9px 6px;text-align:center;border-bottom:1px solid #1f1f1f}
+th{color:#8a8a8a;font-weight:600;font-size:12px}
+td.l,th.l{text-align:left}
+.wrap{overflow-x:auto}
+.good{color:#3ddc84}.bad{color:#ff5d5d}
+.card{background:#0d0d0d;border:1px solid #222;border-radius:12px;padding:14px;margin-bottom:14px}
+label{display:block;font-size:13px;color:#8a8a8a;margin:10px 0 5px}
+.note{color:#8a8a8a;font-size:12px;margin-top:8px;line-height:1.5}
+.big{font-size:34px;font-weight:700;color:#1e6fff}
+.tt td input{width:52px;background:#111;color:#fff;border:1px solid #333;border-radius:6px;padding:6px;text-align:center}
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<script>
+/* ================= CONFIG ================= */
+const DAYS = ["Mon","Tue","Wed","Thu","Fri"];
+const LAB_WEIGHT = 3;          // 1 lab = 3 attendance
+const WEEKS = 5;
+const ROLLS = {FD:30, BP:115};
+const DIVS  = {FD:[1,2,3,4,5], BP:[1,2,3,4,5,6,7,8]};
+const FULL  = {FD:"Pharm D", BP:"B.Pharm"};
+
+/* Timetable per class: [lectures, labs] for Mon..Fri (from your Excel file).
+   Edit inside the website with the "Timetable" button. */
+const A=[[3,1],[3,1],[3,1],[3,1],[3,1]];            // 3 lec + 1 lab every day
+const DEFAULT_TT = {
+ "FD-1":A,
+ "FD-2":[[3,1],[3,1],[6,0],[6,0],[3,1]],           // 3 lab days; Wed & Thu all 6 lec
+ "FD-3":A,
+ "FD-4":[[3,1],[6,0],[3,1],[3,1],[3,1]],
+ "FD-5":[[3,0],[3,0],[3,0],[3,0],[0,0]],            // clerkship / project work not counted
+ "BP-1":A,"BP-2":A,"BP-3":A,"BP-4":A,
+ "BP-5":[[3,1],[3,1],[3,1],[6,0],[6,0]],
+ "BP-6":A,
+ "BP-7":[[3,1],[3,1],[3,1],[3,1],[6,0]],
+ "BP-8":A
+};
+
+/* ================= STORAGE ================= */
+let S = {att:{}, names:{}, tt:{}};
+try{ const r=localStorage.getItem("attCalc"); if(r) S=Object.assign(S,JSON.parse(r)); }catch(e){}
+function save(){ try{ localStorage.setItem("attCalc",JSON.stringify(S)); }catch(e){} }
+const getTT = k => S.tt[k] || DEFAULT_TT[k];
+const getName = (k,r) => (S.names[k] && S.names[k][r]) || "";
+function getAtt(k,w,r){ return (S.att[k] && S.att[k][w] && S.att[k][w][r]) || [0,0,0,0,0]; }
+function setAtt(k,w,r,d,v){
+  S.att[k]=S.att[k]||{}; S.att[k][w]=S.att[k][w]||{};
+  const a=S.att[k][w][r]=(S.att[k][w][r]||[0,0,0,0,0]).slice(); a[d]=v; S.att[k][w][r]=a;
+}
+
+/* ================= FORMULA ================= */
+/* weekly total  = sum(lectures) + 3 x sum(labs)
+   student's     = for every day present: lectures + 3 x labs
+   attendance %  = student's / weekly total x 100                        */
+function weekTotals(k){
+  const tt=getTT(k); let lec=0,lab=0;
+  tt.forEach(d=>{lec+=d[0];lab+=d[1];});
+  return {lec,lab,units:lec+LAB_WEIGHT*lab};
+}
+function studentWeek(k,w,r){
+  const tt=getTT(k), a=getAtt(k,w,r); let lec=0,lab=0;
+  a.forEach((p,i)=>{ if(p){lec+=tt[i][0];lab+=tt[i][1];} });
+  return {lec,lab,units:lec+LAB_WEIGHT*lab};
+}
+const pct=(a,b)=>b?(a/b*100):0;
+const cls=p=>p>=75?"good":"bad";
+
+/* ================= UI ================= */
+const app=document.getElementById("app");
+let V={page:"home",type:null,div:null,week:1};
+const key=()=>V.type+"-"+V.div;
+const go=(p,o)=>{Object.assign(V,o||{},{page:p});render();window.scrollTo(0,0);};
+
+function render(){
+  ({home,divs,roll,result,calc,tt})[V.page]();
+}
+
+function home(){
+  app.innerHTML=`<h1>Attendance Calculator</h1><div class="sub">Select a class</div>
+  <div class="grid">
+   <button class="box" onclick="go('divs',{type:'FD'})">FD<small>${FULL.FD}</small></button>
+   <button class="box" onclick="go('divs',{type:'BP'})">BP<small>${FULL.BP}</small></button>
+  </div>
+  <div style="margin-top:22px"><button class="btn fill" style="width:100%;padding:14px" onclick="go('calc')">Calculate student attendance</button></div>`;
+}
+
+function divs(){
+  const t=V.type;
+  app.innerHTML=`<div class="top"><button class="btn" onclick="go('home')">&larr; Back</button><h2>${t}</h2></div>
+  <div class="grid">${DIVS[t].map(n=>`<button class="box" onclick="go('roll',{div:${n}})">${t}-${n}<small>Roll 1 – ${ROLLS[t]}</small></button>`).join("")}</div>`;
+}
+
+function roll(){
+  const k=key(), n=ROLLS[V.type], tot=weekTotals(k);
+  let rows="";
+  for(let r=1;r<=n;r++){
+    const a=getAtt(k,V.week,r);
+    rows+=`<div class="row"><div class="rn">${r}</div>
+    <input class="nm" placeholder="Student name" value="${getName(k,r).replace(/"/g,"&quot;")}" onchange="setName(${r},this.value)">
+    <div class="days">${DAYS.map((d,i)=>`<button class="d ${a[i]?"on":""}" id="b${r}_${i}" onclick="tog(${r},${i})">${d[0]}</button>`).join("")}</div></div>`;
+  }
+  app.innerHTML=`<div class="hdr"><div class="top" style="margin-bottom:8px"><button class="btn" onclick="go('divs')">&larr; Back</button><h2>${k}</h2>
+  <button class="btn" onclick="go('tt')">Timetable</button></div>
+  <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px"><select id="wk" onchange="V.week=+this.value;roll()">${Array.from({length:WEEKS},(_,i)=>`<option value="${i+1}" ${V.week==i+1?"selected":""}>Week ${i+1}</option>`).join("")}</select></div>
+  <div class="note" style="margin:0 0 6px">This week: ${tot.lec} lec + ${tot.lab} lab = ${tot.units} attendance. Blue = present, grey = absent. Days: M T W T F</div>
+  <div style="display:flex;gap:5px;justify-content:flex-end;padding-bottom:4px">${DAYS.map((d,i)=>`<button class="d" style="width:34px;height:26px;border-color:#1e6fff;color:#1e6fff" title="Mark all present on ${d}" onclick="allDay(${i})">All</button>`).join("")}</div></div>
+  ${rows}
+  <div class="sbar"><button class="btn fill" onclick="go('result')">Submit &amp; calculate week</button></div>`;
+}
+function setName(r,v){const k=key();S.names[k]=S.names[k]||{};S.names[k][r]=v;save();}
+function tog(r,i){const k=key();const v=getAtt(k,V.week,r)[i]?0:1;setAtt(k,V.week,r,i,v);save();
+  document.getElementById("b"+r+"_"+i).classList.toggle("on",!!v);}
+function allDay(i){const k=key();for(let r=1;r<=ROLLS[V.type];r++){setAtt(k,V.week,r,i,1);}save();roll();}
+
+function result(){
+  const k=key(), n=ROLLS[V.type], tot=weekTotals(k);
+  let rows="";
+  for(let r=1;r<=n;r++){
+    const s=studentWeek(k,V.week,r), p=pct(s.units,tot.units);
+    rows+=`<tr><td>${r}</td><td class="l">${getName(k,r)||"-"}</td><td>${s.lec}/${tot.lec}</td><td>${s.lab}/${tot.lab}</td><td>${s.units}/${tot.units}</td><td class="${cls(p)}">${p.toFixed(1)}%</td></tr>`;
+  }
+  app.innerHTML=`<div class="top"><button class="btn" onclick="go('roll')">&larr; Edit</button><h2>${k} &middot; Week ${V.week}</h2></div>
+  <div class="note" style="margin:0 0 10px">Formula: lectures x 1 + labs x ${LAB_WEIGHT}. Weekly total = ${tot.units}.</div>
+  <div class="wrap"><table><tr><th>Roll</th><th class="l">Name</th><th>Lec</th><th>Lab</th><th>Attendance</th><th>%</th></tr>${rows}</table></div>
+  <div style="margin-top:16px;display:flex;gap:8px"><button class="btn fill" style="flex:1" onclick="go('calc',{cType:V.type,cDiv:V.div})">Calculate</button><button class="btn" style="flex:1" onclick="go('home')">Home</button></div>`;
+}
+
+function calc(){
+  const t=V.cType||"FD", d=V.cDiv||1;
+  app.innerHTML=`<div class="top"><button class="btn" onclick="go('home')">&larr; Back</button><h2>Calculate</h2></div>
+  <div class="card"><label>1. Enrollment / Roll number</label><input class="f" id="cr" type="number" min="1" placeholder="e.g. 12" value="${V.cRoll||""}">
+  <label>2. Class</label><select id="ct" onchange="V.cType=this.value;V.cDiv=1;V.cRoll=document.getElementById('cr').value;calc()"><option value="FD" ${t=="FD"?"selected":""}>FD</option><option value="BP" ${t=="BP"?"selected":""}>BP</option></select>
+  <label>Division</label><select id="cd">${DIVS[t].map(n=>`<option value="${n}" ${d==n?"selected":""}>${t}-${n}</option>`).join("")}</select>
+  <button class="btn fill" style="width:100%;margin-top:16px;padding:14px" onclick="doCalc()">Calculate</button></div><div id="out"></div>`;
+}
+function doCalc(){
+  const t=document.getElementById("ct").value, d=+document.getElementById("cd").value, r=+document.getElementById("cr").value;
+  V.cType=t;V.cDiv=d;V.cRoll=r;const k=t+"-"+d, out=document.getElementById("out");
+  if(!r||r<1||r>ROLLS[t]){out.innerHTML=`<div class="card bad">Roll number must be between 1 and ${ROLLS[t]} for ${t}.</div>`;return;}
+  const tot=weekTotals(k); let rows="",U=0,T=0,L=0,B=0,TL=0,TB=0;
+  for(let w=1;w<=WEEKS;w++){
+    const done=S.att[k]&&S.att[k][w];
+    if(!done){rows+=`<tr><td>Week ${w}</td><td colspan="4" style="color:#555">not submitted</td></tr>`;continue;}
+    const s=studentWeek(k,w,r),p=pct(s.units,tot.units);
+    U+=s.units;T+=tot.units;L+=s.lec;B+=s.lab;TL+=tot.lec;TB+=tot.lab;
+    rows+=`<tr><td>Week ${w}</td><td>${s.lec}/${tot.lec}</td><td>${s.lab}/${tot.lab}</td><td>${s.units}/${tot.units}</td><td class="${cls(p)}">${p.toFixed(1)}%</td></tr>`;
+  }
+  const P=pct(U,T);
+  out.innerHTML=`<div class="card"><div style="color:#8a8a8a;font-size:13px">${k} &middot; Roll ${r}${getName(k,r)?" &middot; "+getName(k,r):""}</div>
+  <div class="big ${T?cls(P):""}">${T?P.toFixed(1)+"%":"-"}</div>
+  <div class="note">Total: ${U} of ${T} attendance (lectures ${L}/${TL}, labs ${B}/${TB} counted x${LAB_WEIGHT}) across submitted weeks.</div></div>
+  <div class="card wrap"><table><tr><th class="l">Week</th><th>Lec</th><th>Lab</th><th>Attendance</th><th>%</th></tr>${rows}</table></div>`;
+}
+
+function tt(){
+  const k=key(), t=getTT(k);
+  app.innerHTML=`<div class="top"><button class="btn" onclick="go('roll')">&larr; Back</button><h2>${k} timetable</h2></div>
+  <div class="card tt wrap"><table><tr><th class="l">Day</th><th>Lectures</th><th>Labs</th></tr>
+  ${DAYS.map((d,i)=>`<tr><td class="l">${d}</td><td><input type="number" min="0" id="l${i}" value="${t[i][0]}"></td><td><input type="number" min="0" id="p${i}" value="${t[i][1]}"></td></tr>`).join("")}</table>
+  <div class="note">Each lab counts as ${LAB_WEIGHT} attendance. Changing this affects all weeks of ${k}.</div></div>
+  <button class="btn fill" style="width:100%;padding:14px" onclick="saveTT()">Save</button>
+  <button class="btn" style="width:100%;padding:12px;margin-top:10px" onclick="resetTT()">Reset to timetable file</button>`;
+}
+function saveTT(){const k=key();S.tt[k]=DAYS.map((_,i)=>[+document.getElementById("l"+i).value||0,+document.getElementById("p"+i).value||0]);save();go('roll');}
+function resetTT(){delete S.tt[key()];save();go('roll');}
+
+render();
+</script>
+</body>
+</html>
